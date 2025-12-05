@@ -8,42 +8,32 @@ import {
   Wallet, 
   ArrowDownCircle, 
   ArrowUpCircle, 
-  Calculator,
   Plus,
   Store,
   Briefcase,
-  Receipt
+  Receipt,
+  Loader2
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import type { Tables, Enums } from "@/integrations/supabase/types";
 
-interface Transaction {
-  id: string;
-  type: "collection" | "payment";
-  category: string;
-  description: string;
-  amount: number;
-  date: string;
-}
-
-const initialTransactions: Transaction[] = [
-  { id: "1", type: "collection", category: "Stall Billing", description: "Sharma Sweets - Daily Sales", amount: 5400, date: "2024-03-15" },
-  { id: "2", type: "collection", category: "Employment Booking", description: "Kitchen Helper - 3 bookings", amount: 1500, date: "2024-03-15" },
-  { id: "3", type: "collection", category: "Employment Registration", description: "5 new registrations", amount: 2500, date: "2024-03-15" },
-  { id: "4", type: "payment", category: "Participant Payment", description: "Sharma Sweets - After 20% deduction", amount: 4320, date: "2024-03-15" },
-  { id: "5", type: "payment", category: "Other Payment", description: "Stage decoration advance", amount: 5000, date: "2024-03-14" },
-  { id: "6", type: "collection", category: "Stall Billing", description: "Dosa Corner - Daily Sales", amount: 7200, date: "2024-03-14" },
-];
+type Stall = Tables<"stalls">;
+type Payment = Tables<"payments">;
+type BillingTransaction = Tables<"billing_transactions">;
+type Registration = Tables<"registrations">;
 
 const EVENT_MARGIN = 20;
 
 export default function Accounts() {
-  const [transactions, setTransactions] = useState<Transaction[]>(initialTransactions);
+  const queryClient = useQueryClient();
   const [showPaymentForm, setShowPaymentForm] = useState(false);
-  const [paymentType, setPaymentType] = useState<"participant" | "other">("participant");
+  const [paymentType, setPaymentType] = useState<Enums<"payment_type">>("participant");
   
   const [participantPayment, setParticipantPayment] = useState({
-    counterName: "",
+    stallId: "",
     billedAmount: ""
   });
 
@@ -52,35 +42,120 @@ export default function Accounts() {
     amount: ""
   });
 
-  const collections = transactions.filter(t => t.type === "collection");
-  const payments = transactions.filter(t => t.type === "payment");
+  // Fetch stalls
+  const { data: stalls = [] } = useQuery({
+    queryKey: ['stalls'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('stalls')
+        .select('*')
+        .eq('is_verified', true)
+        .order('counter_name');
+      if (error) throw error;
+      return data as Stall[];
+    }
+  });
 
-  const totalCollected = collections.reduce((sum, t) => sum + t.amount, 0);
-  const totalPaid = payments.reduce((sum, t) => sum + t.amount, 0);
+  // Fetch payments
+  const { data: payments = [], isLoading: paymentsLoading } = useQuery({
+    queryKey: ['payments'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('payments')
+        .select('*, stalls(counter_name)')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return data;
+    }
+  });
+
+  // Fetch billing transactions (collections)
+  const { data: billingTransactions = [] } = useQuery({
+    queryKey: ['billing_transactions'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('billing_transactions')
+        .select('*, stalls(counter_name)')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return data;
+    }
+  });
+
+  // Fetch registrations (collections)
+  const { data: registrations = [] } = useQuery({
+    queryKey: ['registrations'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('registrations')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return data as Registration[];
+    }
+  });
+
+  // Create payment mutation
+  const createPaymentMutation = useMutation({
+    mutationFn: async (payment: {
+      payment_type: Enums<"payment_type">;
+      stall_id?: string;
+      total_billed?: number;
+      margin_deducted?: number;
+      amount_paid: number;
+      narration?: string;
+    }) => {
+      const { data, error } = await supabase
+        .from('payments')
+        .insert(payment)
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['payments'] });
+      setParticipantPayment({ stallId: "", billedAmount: "" });
+      setOtherPayment({ narration: "", amount: "" });
+      setShowPaymentForm(false);
+      toast.success("Payment recorded!");
+    },
+    onError: (error) => {
+      toast.error("Failed to record payment: " + error.message);
+    }
+  });
+
+  // Calculate totals
+  const totalBillingCollected = billingTransactions.reduce((sum: number, t: any) => sum + (t.total || 0), 0);
+  const totalRegistrationCollected = registrations.reduce((sum, r) => sum + (r.amount || 0), 0);
+  const totalCollected = totalBillingCollected + totalRegistrationCollected;
+
+  const totalPaid = payments.reduce((sum: number, p: any) => sum + (p.amount_paid || 0), 0);
   const cashBalance = totalCollected - totalPaid;
 
-  const stallBillingTotal = collections
-    .filter(t => t.category === "Stall Billing")
-    .reduce((sum, t) => sum + t.amount, 0);
-
-  const employmentBookingTotal = collections
-    .filter(t => t.category === "Employment Booking")
-    .reduce((sum, t) => sum + t.amount, 0);
-
-  const employmentRegTotal = collections
-    .filter(t => t.category === "Employment Registration")
-    .reduce((sum, t) => sum + t.amount, 0);
-
   const participantPaymentsTotal = payments
-    .filter(t => t.category === "Participant Payment")
-    .reduce((sum, t) => sum + t.amount, 0);
+    .filter((p: any) => p.payment_type === "participant")
+    .reduce((sum: number, p: any) => sum + (p.amount_paid || 0), 0);
 
   const otherPaymentsTotal = payments
-    .filter(t => t.category === "Other Payment")
-    .reduce((sum, t) => sum + t.amount, 0);
+    .filter((p: any) => p.payment_type === "other")
+    .reduce((sum: number, p: any) => sum + (p.amount_paid || 0), 0);
+
+  // Registration type totals
+  const stallRegTotal = registrations
+    .filter(r => r.registration_type === "stall_counter")
+    .reduce((sum, r) => sum + (r.amount || 0), 0);
+
+  const empBookingTotal = registrations
+    .filter(r => r.registration_type === "employment_booking")
+    .reduce((sum, r) => sum + (r.amount || 0), 0);
+
+  const empRegTotal = registrations
+    .filter(r => r.registration_type === "employment_registration")
+    .reduce((sum, r) => sum + (r.amount || 0), 0);
 
   const handleParticipantPayment = () => {
-    if (!participantPayment.counterName || !participantPayment.billedAmount) {
+    if (!participantPayment.stallId || !participantPayment.billedAmount) {
       toast.error("Please fill all fields");
       return;
     }
@@ -89,19 +164,13 @@ export default function Accounts() {
     const deduction = billed * (EVENT_MARGIN / 100);
     const payable = billed - deduction;
 
-    const newTransaction: Transaction = {
-      id: Date.now().toString(),
-      type: "payment",
-      category: "Participant Payment",
-      description: `${participantPayment.counterName} - After ${EVENT_MARGIN}% deduction`,
-      amount: payable,
-      date: new Date().toISOString().split('T')[0]
-    };
-
-    setTransactions([newTransaction, ...transactions]);
-    setParticipantPayment({ counterName: "", billedAmount: "" });
-    setShowPaymentForm(false);
-    toast.success(`Payment of ₹${payable} processed`);
+    createPaymentMutation.mutate({
+      payment_type: "participant",
+      stall_id: participantPayment.stallId,
+      total_billed: billed,
+      margin_deducted: deduction,
+      amount_paid: payable
+    });
   };
 
   const handleOtherPayment = () => {
@@ -110,20 +179,38 @@ export default function Accounts() {
       return;
     }
 
-    const newTransaction: Transaction = {
-      id: Date.now().toString(),
-      type: "payment",
-      category: "Other Payment",
-      description: otherPayment.narration,
-      amount: parseFloat(otherPayment.amount),
-      date: new Date().toISOString().split('T')[0]
-    };
-
-    setTransactions([newTransaction, ...transactions]);
-    setOtherPayment({ narration: "", amount: "" });
-    setShowPaymentForm(false);
-    toast.success("Payment recorded");
+    createPaymentMutation.mutate({
+      payment_type: "other",
+      amount_paid: parseFloat(otherPayment.amount),
+      narration: otherPayment.narration
+    });
   };
+
+  const formatDate = (dateStr: string | null) => {
+    if (!dateStr) return '';
+    return new Date(dateStr).toLocaleDateString();
+  };
+
+  // Build collections list for display
+  const collections = [
+    ...billingTransactions.map((t: any) => ({
+      id: t.id,
+      type: 'billing' as const,
+      category: 'Stall Billing',
+      description: t.stalls?.counter_name || 'Unknown Stall',
+      amount: t.total,
+      date: t.created_at
+    })),
+    ...registrations.map(r => ({
+      id: r.id,
+      type: 'registration' as const,
+      category: r.registration_type === 'stall_counter' ? 'Stall Registration' :
+                r.registration_type === 'employment_booking' ? 'Employment Booking' : 'Employment Registration',
+      description: r.name,
+      amount: r.amount,
+      date: r.created_at
+    }))
+  ].sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
 
   return (
     <PageLayout>
@@ -210,12 +297,17 @@ export default function Accounts() {
               {paymentType === "participant" ? (
                 <div className="grid md:grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label>Counter Name</Label>
-                    <Input
-                      value={participantPayment.counterName}
-                      onChange={(e) => setParticipantPayment({ ...participantPayment, counterName: e.target.value })}
-                      placeholder="Enter counter name"
-                    />
+                    <Label>Select Stall</Label>
+                    <select
+                      value={participantPayment.stallId}
+                      onChange={(e) => setParticipantPayment({ ...participantPayment, stallId: e.target.value })}
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    >
+                      <option value="">Select stall</option>
+                      {stalls.map(s => (
+                        <option key={s.id} value={s.id}>{s.counter_name}</option>
+                      ))}
+                    </select>
                   </div>
                   <div className="space-y-2">
                     <Label>Total Billed Amount (₹)</Label>
@@ -249,7 +341,10 @@ export default function Accounts() {
                     </div>
                   )}
                   <div className="md:col-span-2 flex gap-2">
-                    <Button onClick={handleParticipantPayment}>Process Payment</Button>
+                    <Button onClick={handleParticipantPayment} disabled={createPaymentMutation.isPending}>
+                      {createPaymentMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                      Process Payment
+                    </Button>
                     <Button variant="outline" onClick={() => setShowPaymentForm(false)}>Cancel</Button>
                   </div>
                 </div>
@@ -273,7 +368,10 @@ export default function Accounts() {
                     />
                   </div>
                   <div className="md:col-span-2 flex gap-2">
-                    <Button onClick={handleOtherPayment}>Record Payment</Button>
+                    <Button onClick={handleOtherPayment} disabled={createPaymentMutation.isPending}>
+                      {createPaymentMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                      Record Payment
+                    </Button>
                     <Button variant="outline" onClick={() => setShowPaymentForm(false)}>Cancel</Button>
                   </div>
                 </div>
@@ -295,7 +393,7 @@ export default function Accounts() {
           </TabsList>
 
           <TabsContent value="collections">
-            <div className="grid md:grid-cols-3 gap-4 mb-6">
+            <div className="grid md:grid-cols-4 gap-4 mb-6">
               <Card>
                 <CardContent className="p-4">
                   <div className="flex items-center gap-3">
@@ -304,7 +402,7 @@ export default function Accounts() {
                     </div>
                     <div>
                       <p className="text-sm text-muted-foreground">Stall Billing</p>
-                      <p className="text-xl font-bold text-foreground">₹{stallBillingTotal.toLocaleString()}</p>
+                      <p className="text-xl font-bold text-foreground">₹{totalBillingCollected.toLocaleString()}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -313,11 +411,11 @@ export default function Accounts() {
                 <CardContent className="p-4">
                   <div className="flex items-center gap-3">
                     <div className="h-10 w-10 rounded-xl bg-info/10 flex items-center justify-center">
-                      <Briefcase className="h-5 w-5 text-info" />
+                      <Receipt className="h-5 w-5 text-info" />
                     </div>
                     <div>
-                      <p className="text-sm text-muted-foreground">Employment Booking</p>
-                      <p className="text-xl font-bold text-foreground">₹{employmentBookingTotal.toLocaleString()}</p>
+                      <p className="text-sm text-muted-foreground">Stall Reg.</p>
+                      <p className="text-xl font-bold text-foreground">₹{stallRegTotal.toLocaleString()}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -326,11 +424,24 @@ export default function Accounts() {
                 <CardContent className="p-4">
                   <div className="flex items-center gap-3">
                     <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center">
-                      <Receipt className="h-5 w-5 text-primary" />
+                      <Briefcase className="h-5 w-5 text-primary" />
                     </div>
                     <div>
-                      <p className="text-sm text-muted-foreground">Employment Reg.</p>
-                      <p className="text-xl font-bold text-foreground">₹{employmentRegTotal.toLocaleString()}</p>
+                      <p className="text-sm text-muted-foreground">Emp. Booking</p>
+                      <p className="text-xl font-bold text-foreground">₹{empBookingTotal.toLocaleString()}</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 rounded-xl bg-success/10 flex items-center justify-center">
+                      <Briefcase className="h-5 w-5 text-success" />
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Emp. Reg.</p>
+                      <p className="text-xl font-bold text-foreground">₹{empRegTotal.toLocaleString()}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -350,18 +461,24 @@ export default function Accounts() {
                       </tr>
                     </thead>
                     <tbody>
-                      {collections.map((t) => (
-                        <tr key={t.id} className="border-b border-border/50">
-                          <td className="p-4 text-muted-foreground">{t.date}</td>
-                          <td className="p-4">
-                            <span className="px-2 py-1 bg-success/10 text-success rounded-md text-sm">
-                              {t.category}
-                            </span>
-                          </td>
-                          <td className="p-4 text-foreground">{t.description}</td>
-                          <td className="p-4 text-right font-semibold text-success">+₹{t.amount.toLocaleString()}</td>
+                      {collections.length === 0 ? (
+                        <tr>
+                          <td colSpan={4} className="p-8 text-center text-muted-foreground">No collections yet</td>
                         </tr>
-                      ))}
+                      ) : (
+                        collections.map((t) => (
+                          <tr key={t.id} className="border-b border-border/50">
+                            <td className="p-4 text-muted-foreground">{formatDate(t.date)}</td>
+                            <td className="p-4">
+                              <span className="px-2 py-1 bg-success/10 text-success rounded-md text-sm">
+                                {t.category}
+                              </span>
+                            </td>
+                            <td className="p-4 text-foreground">{t.description}</td>
+                            <td className="p-4 text-right font-semibold text-success">+₹{t.amount.toLocaleString()}</td>
+                          </tr>
+                        ))
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -406,24 +523,44 @@ export default function Accounts() {
                     <thead>
                       <tr className="border-b border-border bg-muted/50">
                         <th className="text-left p-4 font-medium text-muted-foreground">Date</th>
-                        <th className="text-left p-4 font-medium text-muted-foreground">Category</th>
+                        <th className="text-left p-4 font-medium text-muted-foreground">Type</th>
                         <th className="text-left p-4 font-medium text-muted-foreground">Description</th>
                         <th className="text-right p-4 font-medium text-muted-foreground">Amount</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {payments.map((t) => (
-                        <tr key={t.id} className="border-b border-border/50">
-                          <td className="p-4 text-muted-foreground">{t.date}</td>
-                          <td className="p-4">
-                            <span className="px-2 py-1 bg-destructive/10 text-destructive rounded-md text-sm">
-                              {t.category}
-                            </span>
+                      {paymentsLoading ? (
+                        <tr>
+                          <td colSpan={4} className="p-8 text-center">
+                            <Loader2 className="h-6 w-6 animate-spin mx-auto text-primary" />
                           </td>
-                          <td className="p-4 text-foreground">{t.description}</td>
-                          <td className="p-4 text-right font-semibold text-destructive">-₹{t.amount.toLocaleString()}</td>
                         </tr>
-                      ))}
+                      ) : payments.length === 0 ? (
+                        <tr>
+                          <td colSpan={4} className="p-8 text-center text-muted-foreground">No payments yet</td>
+                        </tr>
+                      ) : (
+                        payments.map((p: any) => (
+                          <tr key={p.id} className="border-b border-border/50">
+                            <td className="p-4 text-muted-foreground">{formatDate(p.created_at)}</td>
+                            <td className="p-4">
+                              <span className={`px-2 py-1 rounded-md text-sm ${
+                                p.payment_type === 'participant' 
+                                  ? 'bg-destructive/10 text-destructive' 
+                                  : 'bg-warning/10 text-warning'
+                              }`}>
+                                {p.payment_type === 'participant' ? 'Participant' : 'Other'}
+                              </span>
+                            </td>
+                            <td className="p-4 text-foreground">
+                              {p.payment_type === 'participant' 
+                                ? `${p.stalls?.counter_name || 'Unknown'} - After ${EVENT_MARGIN}% deduction`
+                                : p.narration || 'No description'}
+                            </td>
+                            <td className="p-4 text-right font-semibold text-destructive">-₹{p.amount_paid.toLocaleString()}</td>
+                          </tr>
+                        ))
+                      )}
                     </tbody>
                   </table>
                 </div>

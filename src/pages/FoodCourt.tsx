@@ -12,107 +12,195 @@ import {
   CheckCircle,
   Clock,
   Trash2,
-  IndianRupee
+  Loader2
 } from "lucide-react";
 import { useState } from "react";
+import { supabase } from "@/integrations/supabase/client";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import type { Tables } from "@/integrations/supabase/types";
 
-interface Stall {
-  id: string;
-  name: string;
-  owner: string;
-  phone: string;
-  counterNumber: string;
-  status: "pending" | "verified";
-}
-
-interface Product {
-  id: string;
-  stallId: string;
-  name: string;
-  costPrice: number;
-  margin: number;
-  mrp: number;
-}
-
-const initialStalls: Stall[] = [
-  { id: "1", name: "Sharma Sweets", owner: "Ramesh Sharma", phone: "9876543210", counterNumber: "A1", status: "verified" },
-  { id: "2", name: "Dosa Corner", owner: "Lakshmi Rao", phone: "9876543211", counterNumber: "A2", status: "verified" },
-  { id: "3", name: "Chai Point", owner: "Akash Gupta", phone: "9876543212", counterNumber: "B1", status: "pending" },
-];
-
-const initialProducts: Product[] = [
-  { id: "1", stallId: "1", name: "Gulab Jamun (4pc)", costPrice: 40, margin: 20, mrp: 48 },
-  { id: "2", stallId: "1", name: "Rasgulla (4pc)", costPrice: 50, margin: 20, mrp: 60 },
-  { id: "3", stallId: "2", name: "Masala Dosa", costPrice: 60, margin: 20, mrp: 72 },
-  { id: "4", stallId: "2", name: "Plain Dosa", costPrice: 40, margin: 20, mrp: 48 },
-];
+type Stall = Tables<"stalls">;
+type Product = Tables<"products">;
 
 const EVENT_MARGIN = 20;
 
 export default function FoodCourt() {
-  const [stalls, setStalls] = useState<Stall[]>(initialStalls);
-  const [products, setProducts] = useState<Product[]>(initialProducts);
+  const queryClient = useQueryClient();
   const [showStallForm, setShowStallForm] = useState(false);
   const [showProductForm, setShowProductForm] = useState(false);
   const [selectedStall, setSelectedStall] = useState<string>("");
   
   const [newStall, setNewStall] = useState({
-    name: "",
-    owner: "",
-    phone: "",
-    counterNumber: ""
+    counter_name: "",
+    participant_name: "",
+    mobile: "",
+    email: "",
+    registration_fee: ""
   });
 
   const [newProduct, setNewProduct] = useState({
-    name: "",
-    costPrice: ""
+    item_name: "",
+    cost_price: ""
+  });
+
+  // Fetch stalls
+  const { data: stalls = [], isLoading: stallsLoading } = useQuery({
+    queryKey: ['stalls'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('stalls')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return data as Stall[];
+    }
+  });
+
+  // Fetch products
+  const { data: products = [], isLoading: productsLoading } = useQuery({
+    queryKey: ['products'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('products')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return data as Product[];
+    }
+  });
+
+  // Add stall mutation
+  const addStallMutation = useMutation({
+    mutationFn: async (stall: typeof newStall) => {
+      const { data, error } = await supabase
+        .from('stalls')
+        .insert({
+          counter_name: stall.counter_name,
+          participant_name: stall.participant_name,
+          mobile: stall.mobile || null,
+          email: stall.email || null,
+          registration_fee: stall.registration_fee ? parseFloat(stall.registration_fee) : 0,
+          is_verified: false
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['stalls'] });
+      setNewStall({ counter_name: "", participant_name: "", mobile: "", email: "", registration_fee: "" });
+      setShowStallForm(false);
+      toast.success("Stall registered successfully!");
+    },
+    onError: (error) => {
+      toast.error("Failed to register stall: " + error.message);
+    }
+  });
+
+  // Add product mutation
+  const addProductMutation = useMutation({
+    mutationFn: async (product: { item_name: string; cost_price: number; stall_id: string }) => {
+      const selling_price = Math.ceil(product.cost_price * (1 + EVENT_MARGIN / 100));
+      const { data, error } = await supabase
+        .from('products')
+        .insert({
+          item_name: product.item_name,
+          cost_price: product.cost_price,
+          selling_price,
+          event_margin: EVENT_MARGIN,
+          stall_id: product.stall_id
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+      setNewProduct({ item_name: "", cost_price: "" });
+      setShowProductForm(false);
+      toast.success("Product added successfully!");
+    },
+    onError: (error) => {
+      toast.error("Failed to add product: " + error.message);
+    }
+  });
+
+  // Verify stall mutation
+  const verifyStallMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase
+        .from('stalls')
+        .update({ is_verified: true })
+        .eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['stalls'] });
+      toast.success("Stall verified!");
+    }
+  });
+
+  // Delete stall mutation
+  const deleteStallMutation = useMutation({
+    mutationFn: async (id: string) => {
+      // Delete products first
+      await supabase.from('products').delete().eq('stall_id', id);
+      const { error } = await supabase.from('stalls').delete().eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['stalls'] });
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+      toast.success("Stall deleted!");
+    }
+  });
+
+  // Delete product mutation
+  const deleteProductMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from('products').delete().eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+      toast.success("Product deleted!");
+    }
   });
 
   const handleAddStall = () => {
-    if (newStall.name && newStall.owner) {
-      const counter = newStall.counterNumber || `${String.fromCharCode(65 + Math.floor(stalls.length / 10))}${(stalls.length % 10) + 1}`;
-      setStalls([...stalls, { 
-        ...newStall, 
-        id: Date.now().toString(),
-        counterNumber: counter,
-        status: "pending"
-      }]);
-      setNewStall({ name: "", owner: "", phone: "", counterNumber: "" });
-      setShowStallForm(false);
+    if (newStall.counter_name && newStall.participant_name) {
+      addStallMutation.mutate(newStall);
+    } else {
+      toast.error("Please fill required fields");
     }
   };
 
   const handleAddProduct = () => {
-    if (newProduct.name && newProduct.costPrice && selectedStall) {
-      const cost = parseFloat(newProduct.costPrice);
-      const mrp = Math.ceil(cost * (1 + EVENT_MARGIN / 100));
-      setProducts([...products, {
-        id: Date.now().toString(),
-        stallId: selectedStall,
-        name: newProduct.name,
-        costPrice: cost,
-        margin: EVENT_MARGIN,
-        mrp
-      }]);
-      setNewProduct({ name: "", costPrice: "" });
-      setShowProductForm(false);
+    if (newProduct.item_name && newProduct.cost_price && selectedStall) {
+      addProductMutation.mutate({
+        item_name: newProduct.item_name,
+        cost_price: parseFloat(newProduct.cost_price),
+        stall_id: selectedStall
+      });
+    } else {
+      toast.error("Please fill all fields");
     }
   };
 
-  const handleVerifyStall = (id: string) => {
-    setStalls(stalls.map(s => s.id === id ? { ...s, status: "verified" } : s));
-  };
+  const getStallProducts = (stallId: string) => products.filter(p => p.stall_id === stallId);
 
-  const handleDeleteStall = (id: string) => {
-    setStalls(stalls.filter(s => s.id !== id));
-    setProducts(products.filter(p => p.stallId !== id));
-  };
-
-  const handleDeleteProduct = (id: string) => {
-    setProducts(products.filter(p => p.id !== id));
-  };
-
-  const getStallProducts = (stallId: string) => products.filter(p => p.stallId === stallId);
+  if (stallsLoading || productsLoading) {
+    return (
+      <PageLayout>
+        <div className="container py-8 flex items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      </PageLayout>
+    );
+  }
 
   return (
     <PageLayout>
@@ -152,43 +240,57 @@ export default function FoodCourt() {
                 <CardContent>
                   <div className="grid md:grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label htmlFor="stallName">Stall Name</Label>
+                      <Label htmlFor="counterName">Counter Name *</Label>
                       <Input
-                        id="stallName"
-                        value={newStall.name}
-                        onChange={(e) => setNewStall({ ...newStall, name: e.target.value })}
-                        placeholder="Enter stall name"
+                        id="counterName"
+                        value={newStall.counter_name}
+                        onChange={(e) => setNewStall({ ...newStall, counter_name: e.target.value })}
+                        placeholder="Enter counter name"
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="owner">Owner Name</Label>
+                      <Label htmlFor="owner">Participant Name *</Label>
                       <Input
                         id="owner"
-                        value={newStall.owner}
-                        onChange={(e) => setNewStall({ ...newStall, owner: e.target.value })}
-                        placeholder="Enter owner name"
+                        value={newStall.participant_name}
+                        onChange={(e) => setNewStall({ ...newStall, participant_name: e.target.value })}
+                        placeholder="Enter participant name"
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="stallPhone">Phone</Label>
+                      <Label htmlFor="stallPhone">Mobile</Label>
                       <Input
                         id="stallPhone"
-                        value={newStall.phone}
-                        onChange={(e) => setNewStall({ ...newStall, phone: e.target.value })}
+                        value={newStall.mobile}
+                        onChange={(e) => setNewStall({ ...newStall, mobile: e.target.value })}
                         placeholder="Enter phone number"
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="counter">Counter Number (Auto-assigned if empty)</Label>
+                      <Label htmlFor="email">Email</Label>
                       <Input
-                        id="counter"
-                        value={newStall.counterNumber}
-                        onChange={(e) => setNewStall({ ...newStall, counterNumber: e.target.value })}
-                        placeholder="e.g., A1, B2"
+                        id="email"
+                        type="email"
+                        value={newStall.email}
+                        onChange={(e) => setNewStall({ ...newStall, email: e.target.value })}
+                        placeholder="Enter email"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="fee">Registration Fee (₹)</Label>
+                      <Input
+                        id="fee"
+                        type="number"
+                        value={newStall.registration_fee}
+                        onChange={(e) => setNewStall({ ...newStall, registration_fee: e.target.value })}
+                        placeholder="Enter registration fee"
                       />
                     </div>
                     <div className="md:col-span-2 flex gap-2">
-                      <Button onClick={handleAddStall}>Register Stall</Button>
+                      <Button onClick={handleAddStall} disabled={addStallMutation.isPending}>
+                        {addStallMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                        Register Stall
+                      </Button>
                       <Button variant="outline" onClick={() => setShowStallForm(false)}>Cancel</Button>
                     </div>
                   </div>
@@ -206,12 +308,12 @@ export default function FoodCourt() {
                           <Store className="h-6 w-6 text-warning" />
                         </div>
                         <div>
-                          <h3 className="font-semibold text-foreground">{stall.name}</h3>
-                          <p className="text-sm text-muted-foreground">Counter: {stall.counterNumber}</p>
+                          <h3 className="font-semibold text-foreground">{stall.counter_name}</h3>
+                          <p className="text-sm text-muted-foreground">{stall.participant_name}</p>
                         </div>
                       </div>
-                      <Badge variant={stall.status === "verified" ? "default" : "secondary"}>
-                        {stall.status === "verified" ? (
+                      <Badge variant={stall.is_verified ? "default" : "secondary"}>
+                        {stall.is_verified ? (
                           <><CheckCircle className="h-3 w-3 mr-1" /> Verified</>
                         ) : (
                           <><Clock className="h-3 w-3 mr-1" /> Pending</>
@@ -219,20 +321,26 @@ export default function FoodCourt() {
                       </Badge>
                     </div>
                     <div className="mt-4 text-sm text-muted-foreground">
-                      <p>Owner: {stall.owner}</p>
-                      <p>Phone: {stall.phone}</p>
+                      {stall.mobile && <p>Phone: {stall.mobile}</p>}
+                      {stall.email && <p>Email: {stall.email}</p>}
+                      {stall.registration_fee && <p>Fee: ₹{stall.registration_fee}</p>}
                       <p className="mt-2 text-xs">Products: {getStallProducts(stall.id).length}</p>
                     </div>
                     <div className="mt-4 flex gap-2">
-                      {stall.status === "pending" && (
-                        <Button size="sm" onClick={() => handleVerifyStall(stall.id)}>
+                      {!stall.is_verified && (
+                        <Button 
+                          size="sm" 
+                          onClick={() => verifyStallMutation.mutate(stall.id)}
+                          disabled={verifyStallMutation.isPending}
+                        >
                           Verify
                         </Button>
                       )}
                       <Button 
                         size="sm" 
                         variant="destructive"
-                        onClick={() => handleDeleteStall(stall.id)}
+                        onClick={() => deleteStallMutation.mutate(stall.id)}
+                        disabled={deleteStallMutation.isPending}
                       >
                         <Trash2 className="h-3 w-3" />
                       </Button>
@@ -251,8 +359,8 @@ export default function FoodCourt() {
                 className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
               >
                 <option value="">Select Stall</option>
-                {stalls.filter(s => s.status === "verified").map(s => (
-                  <option key={s.id} value={s.id}>{s.name} ({s.counterNumber})</option>
+                {stalls.filter(s => s.is_verified).map(s => (
+                  <option key={s.id} value={s.id}>{s.counter_name}</option>
                 ))}
               </select>
               <Button 
@@ -276,8 +384,8 @@ export default function FoodCourt() {
                       <Label htmlFor="productName">Item Name</Label>
                       <Input
                         id="productName"
-                        value={newProduct.name}
-                        onChange={(e) => setNewProduct({ ...newProduct, name: e.target.value })}
+                        value={newProduct.item_name}
+                        onChange={(e) => setNewProduct({ ...newProduct, item_name: e.target.value })}
                         placeholder="Enter item name"
                       />
                     </div>
@@ -286,19 +394,22 @@ export default function FoodCourt() {
                       <Input
                         id="costPrice"
                         type="number"
-                        value={newProduct.costPrice}
-                        onChange={(e) => setNewProduct({ ...newProduct, costPrice: e.target.value })}
+                        value={newProduct.cost_price}
+                        onChange={(e) => setNewProduct({ ...newProduct, cost_price: e.target.value })}
                         placeholder="Enter cost price"
                       />
                     </div>
                     <div className="space-y-2">
                       <Label>MRP (Auto-calculated)</Label>
                       <div className="h-10 flex items-center px-3 bg-muted rounded-md text-sm font-medium">
-                        ₹{newProduct.costPrice ? Math.ceil(parseFloat(newProduct.costPrice) * 1.2) : 0}
+                        ₹{newProduct.cost_price ? Math.ceil(parseFloat(newProduct.cost_price) * 1.2) : 0}
                       </div>
                     </div>
                     <div className="md:col-span-3 flex gap-2">
-                      <Button onClick={handleAddProduct}>Add Product</Button>
+                      <Button onClick={handleAddProduct} disabled={addProductMutation.isPending}>
+                        {addProductMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                        Add Product
+                      </Button>
                       <Button variant="outline" onClick={() => setShowProductForm(false)}>Cancel</Button>
                     </div>
                   </div>
@@ -306,7 +417,7 @@ export default function FoodCourt() {
               </Card>
             )}
 
-            {stalls.filter(s => s.status === "verified").map((stall) => {
+            {stalls.filter(s => s.is_verified).map((stall) => {
               const stallProducts = getStallProducts(stall.id);
               if (stallProducts.length === 0) return null;
               
@@ -315,7 +426,7 @@ export default function FoodCourt() {
                   <CardHeader className="pb-3">
                     <CardTitle className="text-lg flex items-center gap-2">
                       <Store className="h-5 w-5 text-warning" />
-                      {stall.name} ({stall.counterNumber})
+                      {stall.counter_name}
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
@@ -333,16 +444,17 @@ export default function FoodCourt() {
                         <tbody>
                           {stallProducts.map((product) => (
                             <tr key={product.id} className="border-b border-border/50">
-                              <td className="py-3 font-medium text-foreground">{product.name}</td>
-                              <td className="py-3 text-right text-muted-foreground">₹{product.costPrice}</td>
-                              <td className="py-3 text-right text-success">{product.margin}%</td>
-                              <td className="py-3 text-right font-semibold text-foreground">₹{product.mrp}</td>
+                              <td className="py-3 font-medium text-foreground">{product.item_name}</td>
+                              <td className="py-3 text-right text-muted-foreground">₹{product.cost_price}</td>
+                              <td className="py-3 text-right text-success">{product.event_margin}%</td>
+                              <td className="py-3 text-right font-semibold text-foreground">₹{product.selling_price}</td>
                               <td className="py-3 text-right">
                                 <Button 
                                   variant="ghost" 
                                   size="icon" 
                                   className="h-8 w-8 text-destructive"
-                                  onClick={() => handleDeleteProduct(product.id)}
+                                  onClick={() => deleteProductMutation.mutate(product.id)}
+                                  disabled={deleteProductMutation.isPending}
                                 >
                                   <Trash2 className="h-4 w-4" />
                                 </Button>

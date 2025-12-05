@@ -12,10 +12,19 @@ import {
   Printer,
   CreditCard,
   UserPlus,
-  Briefcase
+  Briefcase,
+  Loader2
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import type { Tables, Enums } from "@/integrations/supabase/types";
+
+type Stall = Tables<"stalls">;
+type Product = Tables<"products">;
+type BillingTransaction = Tables<"billing_transactions">;
+type Registration = Tables<"registrations">;
 
 interface BillItem {
   id: string;
@@ -24,75 +33,146 @@ interface BillItem {
   price: number;
 }
 
-interface Bill {
-  id: string;
-  counterName: string;
-  items: BillItem[];
-  total: number;
-  date: string;
-  type: "billing" | "registration";
-}
-
-interface Registration {
-  id: string;
-  type: "stall" | "employment_booking" | "employment_reg";
-  name: string;
-  category?: string;
-  phone: string;
-  amount: number;
-  date: string;
-}
-
-const stalls = [
-  { id: "1", name: "Sharma Sweets", counter: "A1" },
-  { id: "2", name: "Dosa Corner", counter: "A2" },
-  { id: "3", name: "Chai Point", counter: "B1" },
-];
-
-const products: Record<string, { name: string; price: number }[]> = {
-  "1": [
-    { name: "Gulab Jamun (4pc)", price: 48 },
-    { name: "Rasgulla (4pc)", price: 60 },
-  ],
-  "2": [
-    { name: "Masala Dosa", price: 72 },
-    { name: "Plain Dosa", price: 48 },
-  ],
-  "3": [
-    { name: "Masala Chai", price: 24 },
-    { name: "Coffee", price: 30 },
-  ],
-};
-
 export default function Billing() {
-  const [bills, setBills] = useState<Bill[]>([]);
-  const [registrations, setRegistrations] = useState<Registration[]>([]);
-  
+  const queryClient = useQueryClient();
   const [selectedStall, setSelectedStall] = useState<string>("");
   const [billItems, setBillItems] = useState<BillItem[]>([]);
   
   const [registration, setRegistration] = useState({
-    type: "stall" as "stall" | "employment_booking" | "employment_reg",
+    type: "stall_counter" as Enums<"registration_type">,
     name: "",
     category: "",
-    phone: "",
+    mobile: "",
     amount: ""
   });
 
-  const addItemToBill = (product: { name: string; price: number }) => {
-    const existingItem = billItems.find(item => item.name === product.name);
+  // Fetch stalls
+  const { data: stalls = [] } = useQuery({
+    queryKey: ['stalls'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('stalls')
+        .select('*')
+        .eq('is_verified', true)
+        .order('counter_name');
+      if (error) throw error;
+      return data as Stall[];
+    }
+  });
+
+  // Fetch products
+  const { data: products = [] } = useQuery({
+    queryKey: ['products'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('products')
+        .select('*')
+        .order('item_name');
+      if (error) throw error;
+      return data as Product[];
+    }
+  });
+
+  // Fetch billing transactions
+  const { data: bills = [], isLoading: billsLoading } = useQuery({
+    queryKey: ['billing_transactions'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('billing_transactions')
+        .select('*, stalls(counter_name)')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return data;
+    }
+  });
+
+  // Fetch registrations
+  const { data: registrations = [], isLoading: regsLoading } = useQuery({
+    queryKey: ['registrations'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('registrations')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return data as Registration[];
+    }
+  });
+
+  // Create bill mutation
+  const createBillMutation = useMutation({
+    mutationFn: async (bill: { stall_id: string; items: BillItem[]; subtotal: number; total: number }) => {
+      const receiptNumber = `BILL-${Date.now()}`;
+      const { data, error } = await supabase
+        .from('billing_transactions')
+        .insert({
+          stall_id: bill.stall_id,
+          items: JSON.parse(JSON.stringify(bill.items)),
+          subtotal: bill.subtotal,
+          total: bill.total,
+          receipt_number: receiptNumber
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['billing_transactions'] });
+      setBillItems([]);
+      setSelectedStall("");
+      toast.success("Bill generated successfully!");
+    },
+    onError: (error) => {
+      toast.error("Failed to generate bill: " + error.message);
+    }
+  });
+
+  // Create registration mutation
+  const createRegMutation = useMutation({
+    mutationFn: async (reg: typeof registration) => {
+      const receiptNumber = `REG-${Date.now()}`;
+      const { data, error } = await supabase
+        .from('registrations')
+        .insert({
+          registration_type: reg.type,
+          name: reg.name,
+          category: reg.category || null,
+          mobile: reg.mobile || null,
+          amount: parseFloat(reg.amount),
+          receipt_number: receiptNumber
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['registrations'] });
+      setRegistration({ type: "stall_counter", name: "", category: "", mobile: "", amount: "" });
+      toast.success("Registration completed!");
+    },
+    onError: (error) => {
+      toast.error("Failed to complete registration: " + error.message);
+    }
+  });
+
+  const stallProducts = selectedStall ? products.filter(p => p.stall_id === selectedStall) : [];
+
+  const addItemToBill = (product: Product) => {
+    const existingItem = billItems.find(item => item.id === product.id);
     if (existingItem) {
       setBillItems(billItems.map(item =>
-        item.name === product.name
+        item.id === product.id
           ? { ...item, quantity: item.quantity + 1 }
           : item
       ));
     } else {
       setBillItems([...billItems, {
-        id: Date.now().toString(),
-        name: product.name,
+        id: product.id,
+        name: product.item_name,
         quantity: 1,
-        price: product.price
+        price: product.selling_price || 0
       }]);
     }
   };
@@ -118,38 +198,40 @@ export default function Billing() {
       return;
     }
     
-    const stall = stalls.find(s => s.id === selectedStall);
-    const newBill: Bill = {
-      id: Date.now().toString(),
-      counterName: `${stall?.name} (${stall?.counter})`,
-      items: [...billItems],
-      total: calculateTotal(),
-      date: new Date().toLocaleString(),
-      type: "billing"
-    };
-    
-    setBills([newBill, ...bills]);
-    setBillItems([]);
-    setSelectedStall("");
-    toast.success("Bill generated successfully!");
+    const total = calculateTotal();
+    createBillMutation.mutate({
+      stall_id: selectedStall,
+      items: billItems,
+      subtotal: total,
+      total: total
+    });
   };
 
   const handleRegistration = () => {
-    if (!registration.name || !registration.phone || !registration.amount) {
+    if (!registration.name || !registration.amount) {
       toast.error("Please fill all required fields");
       return;
     }
+    createRegMutation.mutate(registration);
+  };
 
-    const newReg: Registration = {
-      id: Date.now().toString(),
-      ...registration,
-      amount: parseFloat(registration.amount),
-      date: new Date().toLocaleString()
-    };
+  const getStallName = (stallId: string) => {
+    const stall = stalls.find(s => s.id === stallId);
+    return stall?.counter_name || 'Unknown';
+  };
 
-    setRegistrations([newReg, ...registrations]);
-    setRegistration({ type: "stall", name: "", category: "", phone: "", amount: "" });
-    toast.success("Registration completed!");
+  const formatDate = (dateStr: string | null) => {
+    if (!dateStr) return '';
+    return new Date(dateStr).toLocaleString();
+  };
+
+  const getRegTypeLabel = (type: Enums<"registration_type">) => {
+    switch (type) {
+      case 'stall_counter': return 'Stall Counter';
+      case 'employment_booking': return 'Employment Booking';
+      case 'employment_registration': return 'Employment Registration';
+      default: return type;
+    }
   };
 
   return (
@@ -187,33 +269,40 @@ export default function Billing() {
                     <Label>Select Counter</Label>
                     <select
                       value={selectedStall}
-                      onChange={(e) => setSelectedStall(e.target.value)}
+                      onChange={(e) => {
+                        setSelectedStall(e.target.value);
+                        setBillItems([]);
+                      }}
                       className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                     >
                       <option value="">Select stall</option>
                       {stalls.map(s => (
-                        <option key={s.id} value={s.id}>{s.name} ({s.counter})</option>
+                        <option key={s.id} value={s.id}>{s.counter_name}</option>
                       ))}
                     </select>
                   </div>
 
-                  {selectedStall && (
+                  {selectedStall && stallProducts.length > 0 && (
                     <div className="space-y-2">
                       <Label>Add Items</Label>
                       <div className="flex flex-wrap gap-2">
-                        {products[selectedStall]?.map((product) => (
+                        {stallProducts.map((product) => (
                           <Button
-                            key={product.name}
+                            key={product.id}
                             variant="outline"
                             size="sm"
                             onClick={() => addItemToBill(product)}
                           >
                             <Plus className="h-3 w-3 mr-1" />
-                            {product.name} - ₹{product.price}
+                            {product.item_name} - ₹{product.selling_price}
                           </Button>
                         ))}
                       </div>
                     </div>
+                  )}
+
+                  {selectedStall && stallProducts.length === 0 && (
+                    <p className="text-sm text-muted-foreground">No products found for this stall</p>
                   )}
 
                   {billItems.length > 0 && (
@@ -265,7 +354,13 @@ export default function Billing() {
                         <span className="text-2xl font-bold text-primary">₹{calculateTotal()}</span>
                       </div>
 
-                      <Button onClick={generateBill} className="w-full" size="lg">
+                      <Button 
+                        onClick={generateBill} 
+                        className="w-full" 
+                        size="lg"
+                        disabled={createBillMutation.isPending}
+                      >
+                        {createBillMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                         <Receipt className="h-4 w-4 mr-2" />
                         Generate Bill
                       </Button>
@@ -279,18 +374,24 @@ export default function Billing() {
                   <CardTitle>Recent Bills</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  {bills.length === 0 ? (
+                  {billsLoading ? (
+                    <div className="flex justify-center py-8">
+                      <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                    </div>
+                  ) : bills.length === 0 ? (
                     <p className="text-muted-foreground text-center py-8">No bills generated yet</p>
                   ) : (
                     <div className="space-y-4">
-                      {bills.slice(0, 5).map((bill) => (
+                      {bills.slice(0, 5).map((bill: any) => (
                         <div key={bill.id} className="p-4 border border-border rounded-lg">
                           <div className="flex items-center justify-between mb-2">
-                            <span className="font-semibold text-foreground">{bill.counterName}</span>
-                            <Badge variant="secondary">{bill.date}</Badge>
+                            <span className="font-semibold text-foreground">
+                              {bill.stalls?.counter_name || getStallName(bill.stall_id)}
+                            </span>
+                            <Badge variant="secondary">{formatDate(bill.created_at)}</Badge>
                           </div>
                           <p className="text-sm text-muted-foreground">
-                            {bill.items.length} items
+                            {bill.receipt_number}
                           </p>
                           <p className="text-lg font-bold text-primary mt-1">₹{bill.total}</p>
                         </div>
@@ -313,11 +414,11 @@ export default function Billing() {
                     <p className="text-muted-foreground text-center py-8">No billing receipts</p>
                   ) : (
                     <div className="space-y-3">
-                      {bills.map((bill) => (
+                      {bills.map((bill: any) => (
                         <div key={bill.id} className="p-3 border border-border rounded-lg flex items-center justify-between">
                           <div>
-                            <p className="font-medium">{bill.counterName}</p>
-                            <p className="text-xs text-muted-foreground">{bill.date}</p>
+                            <p className="font-medium">{bill.stalls?.counter_name || 'Unknown'}</p>
+                            <p className="text-xs text-muted-foreground">{formatDate(bill.created_at)}</p>
                           </div>
                           <span className="font-bold text-success">₹{bill.total}</span>
                         </div>
@@ -340,7 +441,9 @@ export default function Billing() {
                         <div key={reg.id} className="p-3 border border-border rounded-lg flex items-center justify-between">
                           <div>
                             <p className="font-medium">{reg.name}</p>
-                            <p className="text-xs text-muted-foreground">{reg.type} - {reg.date}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {getRegTypeLabel(reg.registration_type)} - {formatDate(reg.created_at)}
+                            </p>
                           </div>
                           <span className="font-bold text-success">₹{reg.amount}</span>
                         </div>
@@ -365,22 +468,22 @@ export default function Billing() {
                       value={registration.type}
                       onChange={(e) => setRegistration({ 
                         ...registration, 
-                        type: e.target.value as typeof registration.type 
+                        type: e.target.value as Enums<"registration_type">
                       })}
                       className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                     >
-                      <option value="stall">Stall Counter Registration</option>
+                      <option value="stall_counter">Stall Counter Registration</option>
                       <option value="employment_booking">Employment Booking</option>
-                      <option value="employment_reg">Employment Registration</option>
+                      <option value="employment_registration">Employment Registration</option>
                     </select>
                   </div>
 
                   <div className="space-y-2">
-                    <Label>Name</Label>
+                    <Label>Name *</Label>
                     <Input
                       value={registration.name}
                       onChange={(e) => setRegistration({ ...registration, name: e.target.value })}
-                      placeholder={registration.type === "stall" ? "Counter Name" : "Applicant Name"}
+                      placeholder={registration.type === "stall_counter" ? "Counter Name" : "Applicant Name"}
                     />
                   </div>
 
@@ -398,15 +501,15 @@ export default function Billing() {
                   <div className="space-y-2">
                     <Label>Mobile Number</Label>
                     <Input
-                      value={registration.phone}
-                      onChange={(e) => setRegistration({ ...registration, phone: e.target.value })}
+                      value={registration.mobile}
+                      onChange={(e) => setRegistration({ ...registration, mobile: e.target.value })}
                       placeholder="Enter mobile number"
                     />
                   </div>
 
                   <div className="space-y-2">
                     <Label>
-                      {registration.type === "stall" ? "Registration Fee" : "Amount"} (₹)
+                      {registration.type === "stall_counter" ? "Registration Fee" : "Amount"} (₹) *
                     </Label>
                     <Input
                       type="number"
@@ -416,7 +519,12 @@ export default function Billing() {
                     />
                   </div>
 
-                  <Button onClick={handleRegistration} className="w-full">
+                  <Button 
+                    onClick={handleRegistration} 
+                    className="w-full"
+                    disabled={createRegMutation.isPending}
+                  >
+                    {createRegMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                     <UserPlus className="h-4 w-4 mr-2" />
                     Complete Registration
                   </Button>
@@ -428,7 +536,11 @@ export default function Billing() {
                   <CardTitle>Recent Registrations</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  {registrations.length === 0 ? (
+                  {regsLoading ? (
+                    <div className="flex justify-center py-8">
+                      <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                    </div>
+                  ) : registrations.length === 0 ? (
                     <p className="text-muted-foreground text-center py-8">No registrations yet</p>
                   ) : (
                     <div className="space-y-3">
@@ -437,9 +549,9 @@ export default function Billing() {
                           <div className="flex items-start justify-between">
                             <div className="flex items-center gap-3">
                               <div className={`h-10 w-10 rounded-xl flex items-center justify-center ${
-                                reg.type === "stall" ? "bg-warning/10" : "bg-info/10"
+                                reg.registration_type === "stall_counter" ? "bg-warning/10" : "bg-info/10"
                               }`}>
-                                {reg.type === "stall" ? (
+                                {reg.registration_type === "stall_counter" ? (
                                   <CreditCard className="h-5 w-5 text-warning" />
                                 ) : (
                                   <Briefcase className="h-5 w-5 text-info" />
@@ -447,16 +559,14 @@ export default function Billing() {
                               </div>
                               <div>
                                 <p className="font-semibold text-foreground">{reg.name}</p>
-                                <p className="text-sm text-muted-foreground">{reg.phone}</p>
-                                {reg.category && (
-                                  <Badge variant="outline" className="mt-1">{reg.category}</Badge>
-                                )}
+                                <p className="text-sm text-muted-foreground">{getRegTypeLabel(reg.registration_type)}</p>
                               </div>
                             </div>
-                            <div className="text-right">
-                              <p className="font-bold text-primary">₹{reg.amount}</p>
-                              <p className="text-xs text-muted-foreground">{reg.date}</p>
-                            </div>
+                            <Badge variant="outline">₹{reg.amount}</Badge>
+                          </div>
+                          <div className="mt-2 text-xs text-muted-foreground">
+                            {reg.mobile && <span>Mobile: {reg.mobile} | </span>}
+                            <span>{formatDate(reg.created_at)}</span>
                           </div>
                         </div>
                       ))}
