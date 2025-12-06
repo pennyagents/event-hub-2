@@ -26,6 +26,7 @@ type Stall = Tables<"stalls">;
 type Product = Tables<"products">;
 type BillingTransaction = Tables<"billing_transactions">;
 type Registration = Tables<"registrations">;
+type Payment = Tables<"payments">;
 
 interface BillItem {
   id: string;
@@ -60,7 +61,7 @@ export default function Billing() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Fetch stalls
+  // Fetch all stalls (for billing dropdown - verified only)
   const { data: stalls = [] } = useQuery({
     queryKey: ['stalls'],
     queryFn: async () => {
@@ -71,6 +72,33 @@ export default function Billing() {
         .order('counter_name');
       if (error) throw error;
       return data as Stall[];
+    }
+  });
+
+  // Fetch all stalls for registrations (includes unverified for registration fee tracking)
+  const { data: allStalls = [], isLoading: stallsLoading } = useQuery({
+    queryKey: ['all_stalls'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('stalls')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return data as Stall[];
+    }
+  });
+
+  // Fetch stall registration payments
+  const { data: stallPayments = [] } = useQuery({
+    queryKey: ['stall_payments'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('payments')
+        .select('*')
+        .eq('payment_type', 'participant')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return data as Payment[];
     }
   });
 
@@ -193,6 +221,32 @@ export default function Billing() {
     }
   });
 
+  // Mark stall registration as paid
+  const markStallPaidMutation = useMutation({
+    mutationFn: async (stall: Stall) => {
+      const { data, error } = await supabase
+        .from('payments')
+        .insert({
+          stall_id: stall.id,
+          payment_type: 'participant',
+          amount_paid: stall.registration_fee || 0,
+          total_billed: stall.registration_fee || 0,
+          narration: `Registration fee for ${stall.counter_name}`
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['stall_payments'] });
+      toast.success("Registration fee received!");
+    },
+    onError: (error) => {
+      toast.error("Failed to record payment: " + error.message);
+    }
+  });
+
   const stallProducts = selectedStalls.length > 0 
     ? products.filter(p => selectedStalls.includes(p.stall_id)) 
     : [];
@@ -288,9 +342,15 @@ export default function Billing() {
   const pendingBills = bills.filter((bill: any) => bill.status === 'pending');
   const paidBills = bills.filter((bill: any) => bill.status === 'paid');
   
-  // Calculate total collected (only paid bills)
+  // Stall registration payment status
+  const isStallPaid = (stallId: string) => stallPayments.some(p => p.stall_id === stallId);
+  const pendingStalls = allStalls.filter(s => !isStallPaid(s.id) && (s.registration_fee || 0) > 0);
+  const paidStalls = allStalls.filter(s => isStallPaid(s.id));
+  
+  // Calculate total collected (only paid bills + paid stall registrations)
   const totalCollectedFromBills = paidBills.reduce((sum: number, bill: any) => sum + Number(bill.total), 0);
-  const totalCollectedFromRegs = registrations.reduce((sum, reg) => sum + Number(reg.amount), 0);
+  const totalCollectedFromStallRegs = stallPayments.reduce((sum, p) => sum + Number(p.amount_paid), 0);
+  const totalCollectedFromOtherRegs = registrations.reduce((sum, reg) => sum + Number(reg.amount), 0);
 
   return (
     <PageLayout>
@@ -505,11 +565,12 @@ export default function Billing() {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm text-muted-foreground">Total Collected</p>
-                      <p className="text-3xl font-bold text-primary">₹{totalCollectedFromBills + totalCollectedFromRegs}</p>
+                      <p className="text-3xl font-bold text-primary">₹{totalCollectedFromBills + totalCollectedFromStallRegs + totalCollectedFromOtherRegs}</p>
                     </div>
                     <div className="text-right">
                       <p className="text-sm text-muted-foreground">From Bills: ₹{totalCollectedFromBills}</p>
-                      <p className="text-sm text-muted-foreground">From Registrations: ₹{totalCollectedFromRegs}</p>
+                      <p className="text-sm text-muted-foreground">Stall Registrations: ₹{totalCollectedFromStallRegs}</p>
+                      <p className="text-sm text-muted-foreground">Other Registrations: ₹{totalCollectedFromOtherRegs}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -617,123 +678,206 @@ export default function Billing() {
           </TabsContent>
 
           <TabsContent value="registrations">
-            <div className="grid lg:grid-cols-2 gap-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle>New Registration</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <Label>Registration Type</Label>
-                    <div className="grid grid-cols-3 gap-2">
-                      {[
-                        { value: 'stall_counter', label: 'Stall Counter', icon: Receipt },
-                        { value: 'employment_booking', label: 'Employment Booking', icon: UserPlus },
-                        { value: 'employment_registration', label: 'Employment Reg.', icon: UserPlus }
-                      ].map(({ value, label, icon: Icon }) => (
-                        <Button
-                          key={value}
-                          variant={registration.type === value ? "default" : "outline"}
-                          className="flex flex-col h-auto py-3"
-                          onClick={() => setRegistration(prev => ({ ...prev, type: value as Enums<"registration_type"> }))}
-                        >
-                          <Icon className="h-5 w-5 mb-1" />
-                          <span className="text-xs text-center">{label}</span>
-                        </Button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="reg-name">Name *</Label>
-                    <Input
-                      id="reg-name"
-                      value={registration.name}
-                      onChange={(e) => setRegistration(prev => ({ ...prev, name: e.target.value }))}
-                      placeholder="Enter name"
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="reg-category">Category</Label>
-                    <Input
-                      id="reg-category"
-                      value={registration.category}
-                      onChange={(e) => setRegistration(prev => ({ ...prev, category: e.target.value }))}
-                      placeholder="Enter category"
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="reg-mobile">Mobile</Label>
-                    <Input
-                      id="reg-mobile"
-                      value={registration.mobile}
-                      onChange={(e) => setRegistration(prev => ({ ...prev, mobile: e.target.value }))}
-                      placeholder="Enter mobile number"
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="reg-amount">Amount *</Label>
-                    <Input
-                      id="reg-amount"
-                      type="number"
-                      value={registration.amount}
-                      onChange={(e) => setRegistration(prev => ({ ...prev, amount: e.target.value }))}
-                      placeholder="Enter amount"
-                    />
-                  </div>
-
-                  <Button 
-                    onClick={handleRegistration} 
-                    className="w-full" 
-                    size="lg"
-                    disabled={createRegMutation.isPending}
-                  >
-                    {createRegMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                    <UserPlus className="h-4 w-4 mr-2" />
-                    Complete Registration
-                  </Button>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Recent Registrations</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {regsLoading ? (
-                    <div className="flex justify-center py-8">
-                      <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                    </div>
-                  ) : registrations.length === 0 ? (
-                    <p className="text-muted-foreground text-center py-8">No registrations yet</p>
-                  ) : (
-                    <div className="space-y-4">
-                      {registrations.slice(0, 10).map((reg) => (
-                        <div key={reg.id} className="p-4 border border-border rounded-lg">
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="font-semibold text-foreground">{reg.name}</span>
-                            <Badge variant="outline">{getRegTypeLabel(reg.registration_type)}</Badge>
+            <div className="space-y-6">
+              {/* Stall Registrations from Food Court */}
+              <div className="grid md:grid-cols-2 gap-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center justify-between">
+                      <span>Pending Stall Registrations</span>
+                      <Badge variant="secondary">{pendingStalls.length}</Badge>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {stallsLoading ? (
+                      <div className="flex justify-center py-8">
+                        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                      </div>
+                    ) : pendingStalls.length === 0 ? (
+                      <p className="text-muted-foreground text-center py-8">No pending stall registrations</p>
+                    ) : (
+                      <div className="space-y-3">
+                        {pendingStalls.map((stall) => (
+                          <div key={stall.id} className="p-3 border border-border rounded-lg">
+                            <div className="flex items-center justify-between mb-2">
+                              <div>
+                                <p className="font-medium">{stall.counter_name}</p>
+                                <p className="text-sm text-muted-foreground">{stall.participant_name}</p>
+                                {stall.mobile && <p className="text-xs text-muted-foreground">Mobile: {stall.mobile}</p>}
+                                <p className="text-xs text-muted-foreground">{formatDate(stall.created_at)}</p>
+                              </div>
+                              <span className="font-bold text-lg text-primary">₹{stall.registration_fee || 0}</span>
+                            </div>
+                            <Button 
+                              size="sm" 
+                              className="w-full mt-2"
+                              onClick={() => markStallPaidMutation.mutate(stall)}
+                              disabled={markStallPaidMutation.isPending}
+                            >
+                              {markStallPaidMutation.isPending ? (
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                              ) : (
+                                <Check className="h-4 w-4 mr-2" />
+                              )}
+                              Cash Received
+                            </Button>
                           </div>
-                          {reg.category && (
-                            <p className="text-sm text-muted-foreground">Category: {reg.category}</p>
-                          )}
-                          {reg.mobile && (
-                            <p className="text-sm text-muted-foreground">Mobile: {reg.mobile}</p>
-                          )}
-                          <p className="text-sm text-muted-foreground">{reg.receipt_number}</p>
-                          <div className="flex items-center justify-between mt-2">
-                            <span className="text-xs text-muted-foreground">{formatDate(reg.created_at)}</span>
-                            <span className="text-lg font-bold text-primary">₹{reg.amount}</span>
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center justify-between">
+                      <span>Paid Stall Registrations</span>
+                      <Badge variant="default">{paidStalls.length}</Badge>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {paidStalls.length === 0 ? (
+                      <p className="text-muted-foreground text-center py-8">No paid stall registrations yet</p>
+                    ) : (
+                      <div className="space-y-3">
+                        {paidStalls.map((stall) => (
+                          <div key={stall.id} className="p-3 border border-border rounded-lg flex items-center justify-between bg-primary/5">
+                            <div>
+                              <p className="font-medium">{stall.counter_name}</p>
+                              <p className="text-sm text-muted-foreground">{stall.participant_name}</p>
+                              {stall.mobile && <p className="text-xs text-muted-foreground">Mobile: {stall.mobile}</p>}
+                              <p className="text-xs text-muted-foreground">{formatDate(stall.created_at)}</p>
+                            </div>
+                            <div className="text-right">
+                              <span className="font-bold text-lg text-green-600">₹{stall.registration_fee || 0}</span>
+                              <Badge variant="default" className="ml-2">Paid</Badge>
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* Other Registrations */}
+              <div className="grid lg:grid-cols-2 gap-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>New Registration (Other)</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="space-y-2">
+                      <Label>Registration Type</Label>
+                      <div className="grid grid-cols-2 gap-2">
+                        {[
+                          { value: 'employment_booking', label: 'Employment Booking', icon: UserPlus },
+                          { value: 'employment_registration', label: 'Employment Reg.', icon: UserPlus }
+                        ].map(({ value, label, icon: Icon }) => (
+                          <Button
+                            key={value}
+                            variant={registration.type === value ? "default" : "outline"}
+                            className="flex flex-col h-auto py-3"
+                            onClick={() => setRegistration(prev => ({ ...prev, type: value as Enums<"registration_type"> }))}
+                          >
+                            <Icon className="h-5 w-5 mb-1" />
+                            <span className="text-xs text-center">{label}</span>
+                          </Button>
+                        ))}
+                      </div>
                     </div>
-                  )}
-                </CardContent>
-              </Card>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="reg-name">Name *</Label>
+                      <Input
+                        id="reg-name"
+                        value={registration.name}
+                        onChange={(e) => setRegistration(prev => ({ ...prev, name: e.target.value }))}
+                        placeholder="Enter name"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="reg-category">Category</Label>
+                      <Input
+                        id="reg-category"
+                        value={registration.category}
+                        onChange={(e) => setRegistration(prev => ({ ...prev, category: e.target.value }))}
+                        placeholder="Enter category"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="reg-mobile">Mobile</Label>
+                      <Input
+                        id="reg-mobile"
+                        value={registration.mobile}
+                        onChange={(e) => setRegistration(prev => ({ ...prev, mobile: e.target.value }))}
+                        placeholder="Enter mobile number"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="reg-amount">Amount *</Label>
+                      <Input
+                        id="reg-amount"
+                        type="number"
+                        value={registration.amount}
+                        onChange={(e) => setRegistration(prev => ({ ...prev, amount: e.target.value }))}
+                        placeholder="Enter amount"
+                      />
+                    </div>
+
+                    <Button 
+                      onClick={handleRegistration} 
+                      className="w-full" 
+                      size="lg"
+                      disabled={createRegMutation.isPending}
+                    >
+                      {createRegMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                      <UserPlus className="h-4 w-4 mr-2" />
+                      Complete Registration
+                    </Button>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Recent Registrations</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {regsLoading ? (
+                      <div className="flex justify-center py-8">
+                        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                      </div>
+                    ) : registrations.length === 0 ? (
+                      <p className="text-muted-foreground text-center py-8">No registrations yet</p>
+                    ) : (
+                      <div className="space-y-4">
+                        {registrations.slice(0, 10).map((reg) => (
+                          <div key={reg.id} className="p-4 border border-border rounded-lg">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="font-semibold text-foreground">{reg.name}</span>
+                              <Badge variant="outline">{getRegTypeLabel(reg.registration_type)}</Badge>
+                            </div>
+                            {reg.category && (
+                              <p className="text-sm text-muted-foreground">Category: {reg.category}</p>
+                            )}
+                            {reg.mobile && (
+                              <p className="text-sm text-muted-foreground">Mobile: {reg.mobile}</p>
+                            )}
+                            <p className="text-sm text-muted-foreground">{reg.receipt_number}</p>
+                            <div className="flex items-center justify-between mt-2">
+                              <span className="text-xs text-muted-foreground">{formatDate(reg.created_at)}</span>
+                              <span className="text-lg font-bold text-primary">₹{reg.amount}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
             </div>
           </TabsContent>
         </Tabs>
