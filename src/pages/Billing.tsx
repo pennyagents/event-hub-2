@@ -36,6 +36,7 @@ interface BillItem {
   name: string;
   quantity: number;
   price: number;
+  event_margin: number;
 }
 
 export default function Billing() {
@@ -385,7 +386,8 @@ export default function Billing() {
         id: product.id,
         name: product.item_name,
         quantity: 1,
-        price: product.selling_price || 0
+        price: product.selling_price || 0,
+        event_margin: product.event_margin || 20
       }]);
     }
   };

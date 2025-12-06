@@ -286,7 +286,7 @@ export default function StallDashboard() {
                       // Calculate balance by deducting commission per item
                       const items = Array.isArray(tx.items) ? tx.items : [];
                       const balanceAmount = items.reduce((sum: number, item: any) => {
-                        const itemTotal = Number(item.selling_price || 0) * Number(item.quantity || 1);
+                        const itemTotal = Number(item.price || 0) * Number(item.quantity || 1);
                         const commission = Number(item.event_margin || 20);
                         const itemBalance = itemTotal * (1 - commission / 100);
                         return sum + itemBalance;
