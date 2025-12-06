@@ -93,10 +93,10 @@ export default function StallDashboard() {
 
   if (!stall) return null;
 
-  const totalBilled = transactions.reduce((sum, t) => sum + Number(t.total), 0);
+  const totalBilledCount = transactions.length;
+  const totalBilledAmount = transactions.reduce((sum, t) => sum + Number(t.total), 0);
   const totalPaid = payments.reduce((sum, p) => sum + Number(p.amount_paid), 0);
-  const marginDeducted = payments.reduce((sum, p) => sum + Number(p.margin_deducted || 0), 0);
-  const balanceAmount = totalBilled - totalPaid - marginDeducted;
+  const balanceDue = totalBilledAmount - totalPaid;
 
   // Separate pending and delivered orders
   const pendingOrders = transactions.filter((t) => t.status !== "delivered");
@@ -179,43 +179,42 @@ export default function StallDashboard() {
         <div className="grid gap-4 md:grid-cols-3">
           <Card className="bg-gradient-to-br from-primary/10 to-primary/5 border-primary/20">
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">Total Billed</CardTitle>
-              <Receipt className="h-4 w-4 text-primary" />
+              <CardTitle className="text-sm font-medium">Total Billed Count</CardTitle>
+              <ShoppingCart className="h-4 w-4 text-primary" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold flex items-center">
-                <IndianRupee className="h-5 w-5" />
-                {totalBilled.toLocaleString()}
+              <div className="text-2xl font-bold">
+                {totalBilledCount}
               </div>
-              <p className="text-xs text-muted-foreground">{transactions.length} orders</p>
+              <p className="text-xs text-muted-foreground">Orders placed</p>
             </CardContent>
           </Card>
 
-          <Card className="bg-gradient-to-br from-green-500/10 to-green-500/5 border-green-500/20">
+          <Card className="bg-gradient-to-br from-blue-500/10 to-blue-500/5 border-blue-500/20">
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">Amount Received</CardTitle>
-              <Wallet className="h-4 w-4 text-green-600" />
+              <CardTitle className="text-sm font-medium">Billed Amount</CardTitle>
+              <Receipt className="h-4 w-4 text-blue-600" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold flex items-center text-green-600">
+              <div className="text-2xl font-bold flex items-center text-blue-600">
                 <IndianRupee className="h-5 w-5" />
-                {totalPaid.toLocaleString()}
+                {totalBilledAmount.toLocaleString()}
               </div>
-              <p className="text-xs text-muted-foreground">Margin: ₹{marginDeducted.toLocaleString()}</p>
+              <p className="text-xs text-muted-foreground">Commission included</p>
             </CardContent>
           </Card>
 
           <Card className="bg-gradient-to-br from-orange-500/10 to-orange-500/5 border-orange-500/20">
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm font-medium">Balance Due</CardTitle>
-              <Store className="h-4 w-4 text-orange-600" />
+              <Wallet className="h-4 w-4 text-orange-600" />
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold flex items-center text-orange-600">
                 <IndianRupee className="h-5 w-5" />
-                {balanceAmount.toLocaleString()}
+                {balanceDue.toLocaleString()}
               </div>
-              <p className="text-xs text-muted-foreground">Pending amount</p>
+              <p className="text-xs text-muted-foreground">After commission deduction</p>
             </CardContent>
           </Card>
         </div>
