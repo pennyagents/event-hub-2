@@ -158,6 +158,13 @@ export default function StallDashboard() {
     }, 0);
   };
 
+  const getCashStatus = (status: string) => {
+    if (status === "paid" || status === "delivered") {
+      return { label: "Received", variant: "default" as const };
+    }
+    return { label: "Pending", variant: "secondary" as const };
+  };
+
   const OrderTable = ({
     orders,
     showDeliverButton = false,
@@ -175,42 +182,56 @@ export default function StallDashboard() {
             <TableHead>Customer</TableHead>
             <TableHead>Items</TableHead>
             <TableHead className="text-right">Total</TableHead>
+            <TableHead>Cash Status</TableHead>
             <TableHead>Date</TableHead>
             <TableHead>Details</TableHead>
             {showDeliverButton && <TableHead>Action</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
-          {orders.map(tx => <TableRow key={tx.id}>
-              <TableCell>{tx.serial_number}</TableCell>
-              <TableCell className="font-mono text-xs">{tx.receipt_number}</TableCell>
-              <TableCell>
-                <div>
-                  <p className="font-medium">{tx.customer_name || "-"}</p>
-                  <p className="text-xs text-muted-foreground">{tx.customer_mobile || "-"}</p>
-                </div>
-              </TableCell>
-              <TableCell>
-                {Array.isArray(tx.items) ? tx.items.length : 0} items
-              </TableCell>
-              <TableCell className="text-right font-medium">
-                ₹{Number(tx.total).toLocaleString()}
-              </TableCell>
-              <TableCell className="text-xs">
-                {tx.created_at ? format(new Date(tx.created_at), "dd/MM/yy HH:mm") : "-"}
-              </TableCell>
-              <TableCell>
-                <Button variant="ghost" size="sm" onClick={() => setSelectedBill(tx)}>
-                  <Eye className="h-4 w-4" />
-                </Button>
-              </TableCell>
-              {showDeliverButton && onDeliver && <TableCell>
-                  <Button size="sm" onClick={() => onDeliver(tx.id)} disabled={updateOrderStatus.isPending}>
-                    <CheckCircle className="h-4 w-4 mr-1" />
-                    Deliver
+          {orders.map(tx => {
+            const cashStatus = getCashStatus(tx.status);
+            return (
+              <TableRow key={tx.id}>
+                <TableCell>{tx.serial_number}</TableCell>
+                <TableCell className="font-mono text-xs">{tx.receipt_number}</TableCell>
+                <TableCell>
+                  <div>
+                    <p className="font-medium">{tx.customer_name || "-"}</p>
+                    <p className="text-xs text-muted-foreground">{tx.customer_mobile || "-"}</p>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  {Array.isArray(tx.items) ? tx.items.length : 0} items
+                </TableCell>
+                <TableCell className="text-right font-medium">
+                  ₹{Number(tx.total).toLocaleString()}
+                </TableCell>
+                <TableCell>
+                  <Badge 
+                    variant={cashStatus.variant}
+                    className={cashStatus.label === "Received" ? "bg-green-500/10 text-green-600 border-green-500/20" : ""}
+                  >
+                    {cashStatus.label}
+                  </Badge>
+                </TableCell>
+                <TableCell className="text-xs">
+                  {tx.created_at ? format(new Date(tx.created_at), "dd/MM/yy HH:mm") : "-"}
+                </TableCell>
+                <TableCell>
+                  <Button variant="ghost" size="sm" onClick={() => setSelectedBill(tx)}>
+                    <Eye className="h-4 w-4" />
                   </Button>
-                </TableCell>}
-            </TableRow>)}
+                </TableCell>
+                {showDeliverButton && onDeliver && <TableCell>
+                    <Button size="sm" onClick={() => onDeliver(tx.id)} disabled={updateOrderStatus.isPending}>
+                      <CheckCircle className="h-4 w-4 mr-1" />
+                      Deliver
+                    </Button>
+                  </TableCell>}
+              </TableRow>
+            );
+          })}
         </TableBody>
       </Table>
     </div>;
