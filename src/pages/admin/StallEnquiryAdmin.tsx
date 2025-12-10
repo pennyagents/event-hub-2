@@ -16,7 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/components/ui/use-toast';
 import { useAdminAuth } from '@/contexts/AdminAuthContext';
 import { supabase } from '@/integrations/supabase/client';
-import { Store, Plus, Pencil, Trash2, FileText, ArrowUp, ArrowDown, Eye, CheckCircle } from 'lucide-react';
+import { Store, Plus, Pencil, Trash2, FileText, ArrowUp, ArrowDown, Eye, CheckCircle, RotateCcw } from 'lucide-react';
 
 interface EnquiryField {
   id: string;
@@ -245,6 +245,23 @@ export default function StallEnquiryAdmin() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['stall-enquiries'] });
       toast({ title: 'Enquiry verified successfully' });
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+    }
+  });
+
+  const restoreEnquiryMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase
+        .from('stall_enquiries')
+        .update({ status: 'pending' })
+        .eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['stall-enquiries'] });
+      toast({ title: 'Enquiry restored to pending' });
     },
     onError: (error: Error) => {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
@@ -611,14 +628,25 @@ export default function StallEnquiryAdmin() {
                               >
                                 <Eye className="h-4 w-4" />
                               </Button>
-                              {enquiry.status !== 'verified' && (
+                              {enquiry.status !== 'verified' ? (
                                 <Button 
                                   variant="ghost" 
                                   size="icon"
                                   onClick={() => verifyEnquiryMutation.mutate(enquiry.id)}
                                   disabled={verifyEnquiryMutation.isPending}
+                                  title="Verify"
                                 >
                                   <CheckCircle className="h-4 w-4 text-green-600" />
+                                </Button>
+                              ) : (
+                                <Button 
+                                  variant="ghost" 
+                                  size="icon"
+                                  onClick={() => restoreEnquiryMutation.mutate(enquiry.id)}
+                                  disabled={restoreEnquiryMutation.isPending}
+                                  title="Restore to Pending"
+                                >
+                                  <RotateCcw className="h-4 w-4 text-orange-600" />
                                 </Button>
                               )}
                             </div>
