@@ -532,16 +532,17 @@ export default function StallEnquiryAdmin() {
                             <div className="border-t pt-4">
                               <Label className="text-muted-foreground text-xs mb-3 block">Form Responses</Label>
                               <div className="space-y-0 rounded-lg overflow-hidden border">
-                                {Object.entries(viewingEnquiry.responses).map(([fieldId, value], index) => {
+                              {Object.entries(viewingEnquiry.responses).map(([fieldId, value], index) => {
                                   const field = fields.find(f => f.id === fieldId);
                                   const label = field?.field_label || fieldId;
+                                  const isProductField = label === 'കൊണ്ടുവരാൻ ഉദ്ദേശിക്കുന്ന ഉൽപ്പന്നം';
                                   return (
                                     <div 
                                       key={fieldId} 
-                                      className={`p-3 ${index % 2 === 0 ? 'bg-muted/50' : 'bg-background'}`}
+                                      className={`p-3 ${isProductField ? 'bg-amber-100 dark:bg-amber-900/30 border-l-4 border-amber-500' : index % 2 === 0 ? 'bg-muted/50' : 'bg-background'}`}
                                     >
-                                      <p className="font-semibold text-sm text-primary">{label}</p>
-                                      <p className="text-foreground mt-1">{value}</p>
+                                      <p className={`font-semibold text-sm ${isProductField ? 'text-amber-700 dark:text-amber-400' : 'text-primary'}`}>{label}</p>
+                                      <p className={`mt-1 ${isProductField ? 'font-medium text-amber-900 dark:text-amber-200' : 'text-foreground'}`}>{value}</p>
                                     </div>
                                   );
                                 })}
