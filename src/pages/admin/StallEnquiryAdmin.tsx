@@ -532,13 +532,17 @@ export default function StallEnquiryAdmin() {
                             <div className="border-t pt-4">
                               <Label className="text-muted-foreground text-xs mb-3 block">Form Responses</Label>
                               <div className="space-y-0 rounded-lg overflow-hidden border">
-                              {Object.entries(viewingEnquiry.responses).map(([fieldId, value], index) => {
+                              {Object.entries(viewingEnquiry.responses)
+                                .map(([fieldId, value]) => {
                                   const field = fields.find(f => f.id === fieldId);
                                   const label = field?.field_label || fieldId;
-                                  // Check both current field label and also check if fieldId itself contains product keywords for old forms
                                   const isProductField = label === 'കൊണ്ടുവരാൻ ഉദ്ദേശിക്കുന്ന ഉൽപ്പന്നം' || 
                                     label.includes('ഉൽപ്പന്നം') || 
                                     label.toLowerCase().includes('product');
+                                  return { fieldId, value, label, isProductField };
+                                })
+                                .sort((a, b) => (b.isProductField ? 1 : 0) - (a.isProductField ? 1 : 0))
+                                .map(({ fieldId, value, label, isProductField }, index) => {
                                   return (
                                     <div 
                                       key={fieldId} 
