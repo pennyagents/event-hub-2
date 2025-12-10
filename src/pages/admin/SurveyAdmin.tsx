@@ -33,12 +33,8 @@ export default function SurveyAdmin() {
   return (
     <PageLayout>
       <div className="container py-8">
-        <Tabs defaultValue="panchayath" className="space-y-6">
+        <Tabs defaultValue="results" className="space-y-6">
           <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="panchayath" className="flex items-center gap-2">
-              <MapPin className="h-4 w-4" />
-              Panchayath & Wards
-            </TabsTrigger>
             <TabsTrigger value="results" className="flex items-center gap-2">
               <BarChart3 className="h-4 w-4" />
               Survey Results
@@ -47,11 +43,11 @@ export default function SurveyAdmin() {
               <FileVideo className="h-4 w-4" />
               View Page Content
             </TabsTrigger>
+            <TabsTrigger value="panchayath" className="flex items-center gap-2">
+              <MapPin className="h-4 w-4" />
+              Panchayath & Wards
+            </TabsTrigger>
           </TabsList>
-
-          <TabsContent value="panchayath">
-            <PanchayathManagement />
-          </TabsContent>
 
           <TabsContent value="results">
             <SurveyResults />
@@ -59,6 +55,10 @@ export default function SurveyAdmin() {
 
           <TabsContent value="content">
             <SurveyContentManagement />
+          </TabsContent>
+
+          <TabsContent value="panchayath">
+            <PanchayathManagement />
           </TabsContent>
         </Tabs>
       </div>
