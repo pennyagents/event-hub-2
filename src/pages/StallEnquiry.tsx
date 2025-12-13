@@ -40,6 +40,8 @@ interface Product {
   cost_price: string;
   selling_price: string;
   selling_unit: string;
+  has_brand: string;
+  brand_name: string;
 }
 
 // Product field IDs from database
@@ -59,7 +61,7 @@ export default function StallEnquiry() {
   const [responses, setResponses] = useState<Record<string, string>>({});
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [products, setProducts] = useState<Product[]>([
-    { product_name: '', cost_price: '', selling_price: '', selling_unit: '' }
+    { product_name: '', cost_price: '', selling_price: '', selling_unit: '', has_brand: '', brand_name: '' }
   ]);
 
   // Fetch form fields
@@ -114,7 +116,7 @@ export default function StallEnquiry() {
   const nonProductFields = fields.filter(f => !PRODUCT_FIELD_IDS.includes(f.id));
 
   const addProduct = () => {
-    setProducts([...products, { product_name: '', cost_price: '', selling_price: '', selling_unit: '' }]);
+    setProducts([...products, { product_name: '', cost_price: '', selling_price: '', selling_unit: '', has_brand: '', brand_name: '' }]);
   };
 
   const removeProduct = (index: number) => {
@@ -151,7 +153,9 @@ export default function StallEnquiry() {
           product_name: p.product_name,
           cost_price: p.cost_price,
           selling_price: p.selling_price,
-          selling_unit: p.selling_unit
+          selling_unit: p.selling_unit,
+          has_brand: p.has_brand,
+          brand_name: p.brand_name
         }))
       };
 
@@ -406,6 +410,39 @@ export default function StallEnquiry() {
                           </div>
                         </RadioGroup>
                       </div>
+
+                      <div>
+                        <Label>ഉൽപ്പന്നത്തിന് ബ്രാൻഡ് നെയിം ഉണ്ടോ?</Label>
+                        <RadioGroup
+                          value={product.has_brand}
+                          onValueChange={(value) => updateProduct(index, 'has_brand', value)}
+                          className="mt-2"
+                        >
+                          <div className="flex items-center space-x-2">
+                            <RadioGroupItem value="അതെ" id={`has-brand-yes-${index}`} />
+                            <Label htmlFor={`has-brand-yes-${index}`} className="font-normal cursor-pointer">
+                              അതെ
+                            </Label>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <RadioGroupItem value="ഇല്ല" id={`has-brand-no-${index}`} />
+                            <Label htmlFor={`has-brand-no-${index}`} className="font-normal cursor-pointer">
+                              ഇല്ല
+                            </Label>
+                          </div>
+                        </RadioGroup>
+                      </div>
+
+                      {product.has_brand === 'അതെ' && (
+                        <div>
+                          <Label>ബ്രാൻഡ് നെയിം *</Label>
+                          <Input
+                            value={product.brand_name}
+                            onChange={(e) => updateProduct(index, 'brand_name', e.target.value)}
+                            placeholder="ബ്രാൻഡിന്റെ പേര് നൽകുക"
+                          />
+                        </div>
+                      )}
                     </div>
                   </Card>
                 ))}
