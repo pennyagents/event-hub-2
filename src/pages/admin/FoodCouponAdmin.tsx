@@ -32,6 +32,8 @@ interface FoodCouponBooking {
   total_amount: number;
   status: string;
   created_at: string;
+  panchayath_id: string;
+  food_option_id: string;
   panchayaths: { name: string };
   food_options: { name: string; price: number };
 }
@@ -52,10 +54,18 @@ export default function FoodCouponAdmin() {
   const [optionPrice, setOptionPrice] = useState("");
   const [optionOrder, setOptionOrder] = useState("0");
   
+  // Booking edit state
+  const [bookingDialogOpen, setBookingDialogOpen] = useState(false);
+  const [editingBooking, setEditingBooking] = useState<FoodCouponBooking | null>(null);
+  const [editBookingName, setEditBookingName] = useState("");
+  const [editBookingMobile, setEditBookingMobile] = useState("");
+  const [editBookingPanchayath, setEditBookingPanchayath] = useState("");
+  const [editBookingFoodOption, setEditBookingFoodOption] = useState("");
+  const [editBookingQuantity, setEditBookingQuantity] = useState(1);
+  
   // Filter state
   const [filterPanchayath, setFilterPanchayath] = useState("all");
   const [filterFoodOption, setFilterFoodOption] = useState("all");
-
   const { data: panchayaths = [] } = useQuery({
     queryKey: ["panchayaths"],
     queryFn: async () => {
@@ -142,6 +152,46 @@ export default function FoodCouponAdmin() {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  // Booking Mutations
+  const saveBookingMutation = useMutation({
+    mutationFn: async () => {
+      if (!editingBooking) return;
+      const selectedFood = foodOptions.find((f) => f.id === editBookingFoodOption);
+      const totalAmount = selectedFood ? selectedFood.price * editBookingQuantity : 0;
+      
+      const { error } = await supabase
+        .from("food_coupon_bookings")
+        .update({
+          name: editBookingName.trim(),
+          mobile: editBookingMobile.trim(),
+          panchayath_id: editBookingPanchayath,
+          food_option_id: editBookingFoodOption,
+          quantity: editBookingQuantity,
+          total_amount: totalAmount,
+        })
+        .eq("id", editingBooking.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("ബുക്കിംഗ് അപ്ഡേറ്റ് ചെയ്തു");
+      queryClient.invalidateQueries({ queryKey: ["food-coupon-bookings"] });
+      resetBookingForm();
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const deleteBookingMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from("food_coupon_bookings").delete().eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("ബുക്കിംഗ് ഡിലീറ്റ് ചെയ്തു");
+      queryClient.invalidateQueries({ queryKey: ["food-coupon-bookings"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   const resetOptionForm = () => {
     setOptionDialogOpen(false);
     setEditingOption(null);
@@ -156,6 +206,26 @@ export default function FoodCouponAdmin() {
     setOptionPrice(option.price.toString());
     setOptionOrder(option.display_order.toString());
     setOptionDialogOpen(true);
+  };
+
+  const resetBookingForm = () => {
+    setBookingDialogOpen(false);
+    setEditingBooking(null);
+    setEditBookingName("");
+    setEditBookingMobile("");
+    setEditBookingPanchayath("");
+    setEditBookingFoodOption("");
+    setEditBookingQuantity(1);
+  };
+
+  const openEditBooking = (booking: FoodCouponBooking) => {
+    setEditingBooking(booking);
+    setEditBookingName(booking.name);
+    setEditBookingMobile(booking.mobile);
+    setEditBookingPanchayath(booking.panchayath_id);
+    setEditBookingFoodOption(booking.food_option_id);
+    setEditBookingQuantity(booking.quantity);
+    setBookingDialogOpen(true);
   };
 
   // Calculate totals
@@ -249,7 +319,77 @@ export default function FoodCouponAdmin() {
 
             {/* Bookings Table */}
             <Card>
-              <CardContent className="pt-6">
+              <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle>Bookings</CardTitle>
+                <Dialog open={bookingDialogOpen} onOpenChange={setBookingDialogOpen}>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Edit Booking</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-4 pt-4">
+                      <div className="space-y-2">
+                        <Label>Name *</Label>
+                        <Input
+                          value={editBookingName}
+                          onChange={(e) => setEditBookingName(e.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Mobile *</Label>
+                        <Input
+                          value={editBookingMobile}
+                          onChange={(e) => setEditBookingMobile(e.target.value)}
+                          maxLength={10}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Panchayath *</Label>
+                        <Select value={editBookingPanchayath} onValueChange={setEditBookingPanchayath}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select Panchayath" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {panchayaths.map((p) => (
+                              <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Food Option *</Label>
+                        <Select value={editBookingFoodOption} onValueChange={setEditBookingFoodOption}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select Food" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {foodOptions.map((o) => (
+                              <SelectItem key={o.id} value={o.id}>{o.name} - ₹{o.price}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Quantity</Label>
+                        <Input
+                          type="number"
+                          min="1"
+                          value={editBookingQuantity}
+                          onChange={(e) => setEditBookingQuantity(parseInt(e.target.value) || 1)}
+                        />
+                      </div>
+                      <Button
+                        className="w-full"
+                        onClick={() => saveBookingMutation.mutate()}
+                        disabled={!editBookingName.trim() || !editBookingMobile.trim() || !editBookingPanchayath || !editBookingFoodOption || saveBookingMutation.isPending}
+                      >
+                        {saveBookingMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        Update
+                      </Button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+              </CardHeader>
+              <CardContent>
                 {bookingsLoading ? (
                   <div className="flex justify-center py-8">
                     <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -268,6 +408,7 @@ export default function FoodCouponAdmin() {
                           <TableHead>Food</TableHead>
                           <TableHead>Qty</TableHead>
                           <TableHead>Amount</TableHead>
+                          <TableHead>Actions</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -280,6 +421,20 @@ export default function FoodCouponAdmin() {
                             <TableCell>{booking.food_options?.name}</TableCell>
                             <TableCell>{booking.quantity}</TableCell>
                             <TableCell className="font-semibold">₹{booking.total_amount}</TableCell>
+                            <TableCell>
+                              <div className="flex gap-2">
+                                <Button variant="ghost" size="icon" onClick={() => openEditBooking(booking)}>
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => deleteBookingMutation.mutate(booking.id)}
+                                >
+                                  <Trash2 className="h-4 w-4 text-destructive" />
+                                </Button>
+                              </div>
+                            </TableCell>
                           </TableRow>
                         ))}
                       </TableBody>

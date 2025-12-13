@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Utensils, Minus, Plus, Loader2 } from "lucide-react";
@@ -21,13 +22,17 @@ interface Panchayath {
   name: string;
 }
 
+interface SelectedFoodItem {
+  id: string;
+  quantity: number;
+}
+
 export default function FoodCoupon() {
   const queryClient = useQueryClient();
   const [selectedPanchayath, setSelectedPanchayath] = useState("");
   const [name, setName] = useState("");
   const [mobile, setMobile] = useState("");
-  const [selectedFoodOption, setSelectedFoodOption] = useState("");
-  const [quantity, setQuantity] = useState(1);
+  const [selectedFoods, setSelectedFoods] = useState<SelectedFoodItem[]>([]);
 
   const { data: panchayaths = [], isLoading: panchayathsLoading } = useQuery({
     queryKey: ["panchayaths"],
@@ -54,19 +59,49 @@ export default function FoodCoupon() {
     },
   });
 
-  const selectedFood = foodOptions.find((f) => f.id === selectedFoodOption);
-  const totalAmount = selectedFood ? selectedFood.price * quantity : 0;
+  const toggleFoodOption = (optionId: string) => {
+    setSelectedFoods((prev) => {
+      const existing = prev.find((f) => f.id === optionId);
+      if (existing) {
+        return prev.filter((f) => f.id !== optionId);
+      }
+      return [...prev, { id: optionId, quantity: 1 }];
+    });
+  };
+
+  const updateQuantity = (optionId: string, delta: number) => {
+    setSelectedFoods((prev) =>
+      prev.map((f) =>
+        f.id === optionId
+          ? { ...f, quantity: Math.max(1, f.quantity + delta) }
+          : f
+      )
+    );
+  };
+
+  const getSelectedFood = (optionId: string) => selectedFoods.find((f) => f.id === optionId);
+
+  const totalAmount = selectedFoods.reduce((sum, item) => {
+    const option = foodOptions.find((o) => o.id === item.id);
+    return sum + (option ? option.price * item.quantity : 0);
+  }, 0);
 
   const bookingMutation = useMutation({
     mutationFn: async () => {
-      const { error } = await supabase.from("food_coupon_bookings").insert({
-        panchayath_id: selectedPanchayath,
-        name: name.trim(),
-        mobile: mobile.trim(),
-        food_option_id: selectedFoodOption,
-        quantity,
-        total_amount: totalAmount,
+      // Insert each selected food as a separate booking
+      const bookings = selectedFoods.map((item) => {
+        const option = foodOptions.find((o) => o.id === item.id);
+        return {
+          panchayath_id: selectedPanchayath,
+          name: name.trim(),
+          mobile: mobile.trim(),
+          food_option_id: item.id,
+          quantity: item.quantity,
+          total_amount: option ? option.price * item.quantity : 0,
+        };
       });
+
+      const { error } = await supabase.from("food_coupon_bookings").insert(bookings);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -76,8 +111,7 @@ export default function FoodCoupon() {
       setSelectedPanchayath("");
       setName("");
       setMobile("");
-      setSelectedFoodOption("");
-      setQuantity(1);
+      setSelectedFoods([]);
       queryClient.invalidateQueries({ queryKey: ["food-coupon-bookings"] });
     },
     onError: (error: Error) => {
@@ -89,7 +123,7 @@ export default function FoodCoupon() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedPanchayath || !name.trim() || !mobile.trim() || !selectedFoodOption) {
+    if (!selectedPanchayath || !name.trim() || !mobile.trim() || selectedFoods.length === 0) {
       toast.error("എല്ലാ ഫീൽഡുകളും പൂരിപ്പിക്കുക");
       return;
     }
@@ -99,9 +133,6 @@ export default function FoodCoupon() {
     }
     bookingMutation.mutate();
   };
-
-  const incrementQuantity = () => setQuantity((q) => q + 1);
-  const decrementQuantity = () => setQuantity((q) => Math.max(1, q - 1));
 
   return (
     <PageLayout>
@@ -159,45 +190,82 @@ export default function FoodCoupon() {
                   />
                 </div>
 
-                {/* Food Option Selection */}
-                <div className="space-y-2">
-                  <Label>ഫുഡ് ഓപ്ഷൻ *</Label>
-                  <Select value={selectedFoodOption} onValueChange={setSelectedFoodOption}>
-                    <SelectTrigger>
-                      <SelectValue placeholder={foodOptionsLoading ? "ലോഡ് ചെയ്യുന്നു..." : "ഫുഡ് തിരഞ്ഞെടുക്കുക"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {foodOptions.map((option) => (
-                        <SelectItem key={option.id} value={option.id}>
-                          {option.name} - ₹{option.price}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {/* Quantity */}
-                <div className="space-y-2">
-                  <Label>എണ്ണം</Label>
-                  <div className="flex items-center gap-4">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      onClick={decrementQuantity}
-                      disabled={quantity <= 1}
-                    >
-                      <Minus className="h-4 w-4" />
-                    </Button>
-                    <span className="text-xl font-semibold w-12 text-center">{quantity}</span>
-                    <Button type="button" variant="outline" size="icon" onClick={incrementQuantity}>
-                      <Plus className="h-4 w-4" />
-                    </Button>
-                  </div>
+                {/* Food Options Multi-Select */}
+                <div className="space-y-3">
+                  <Label>ഫുഡ് ഓപ്ഷൻ * (ഒന്നിലധികം തിരഞ്ഞെടുക്കാം)</Label>
+                  {foodOptionsLoading ? (
+                    <div className="flex justify-center py-4">
+                      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {foodOptions.map((option) => {
+                        const selectedItem = getSelectedFood(option.id);
+                        const isSelected = !!selectedItem;
+                        
+                        return (
+                          <div
+                            key={option.id}
+                            className={`p-4 rounded-lg border transition-colors ${
+                              isSelected ? "border-primary bg-primary/5" : "border-border"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3">
+                                <Checkbox
+                                  id={option.id}
+                                  checked={isSelected}
+                                  onCheckedChange={() => toggleFoodOption(option.id)}
+                                />
+                                <label
+                                  htmlFor={option.id}
+                                  className="cursor-pointer font-medium"
+                                >
+                                  {option.name}
+                                </label>
+                              </div>
+                              <span className="text-primary font-semibold">₹{option.price}</span>
+                            </div>
+                            
+                            {isSelected && (
+                              <div className="flex items-center gap-4 mt-3 pl-7">
+                                <span className="text-sm text-muted-foreground">എണ്ണം:</span>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="icon"
+                                  className="h-8 w-8"
+                                  onClick={() => updateQuantity(option.id, -1)}
+                                  disabled={selectedItem.quantity <= 1}
+                                >
+                                  <Minus className="h-3 w-3" />
+                                </Button>
+                                <span className="w-8 text-center font-semibold">
+                                  {selectedItem.quantity}
+                                </span>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="icon"
+                                  className="h-8 w-8"
+                                  onClick={() => updateQuantity(option.id, 1)}
+                                >
+                                  <Plus className="h-3 w-3" />
+                                </Button>
+                                <span className="ml-auto text-sm font-medium">
+                                  = ₹{option.price * selectedItem.quantity}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
 
                 {/* Total */}
-                {selectedFood && (
+                {selectedFoods.length > 0 && (
                   <div className="p-4 rounded-lg bg-muted">
                     <div className="flex justify-between items-center">
                       <span className="text-muted-foreground">ആകെ തുക:</span>
