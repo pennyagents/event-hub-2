@@ -66,6 +66,7 @@ export default function FoodCourt() {
   });
 
   const [viewingEnquiry, setViewingEnquiry] = useState<Enquiry | null>(null);
+  const [enquiryPanchayathFilter, setEnquiryPanchayathFilter] = useState<string>("");
 
   // Fetch stalls
   const { data: stalls = [], isLoading: stallsLoading } = useQuery({
@@ -123,6 +124,24 @@ export default function FoodCourt() {
       return data as { id: string; field_label: string }[];
     }
   });
+
+  // Fetch panchayaths for filter
+  const { data: panchayaths = [] } = useQuery({
+    queryKey: ['panchayaths'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('panchayaths')
+        .select('*')
+        .order('name');
+      if (error) throw error;
+      return data;
+    }
+  });
+
+  // Filter verified enquiries by panchayath
+  const filteredEnquiries = enquiryPanchayathFilter
+    ? verifiedEnquiries.filter(e => e.panchayath_id === enquiryPanchayathFilter)
+    : verifiedEnquiries;
 
   // Add stall mutation
   const addStallMutation = useMutation({
@@ -544,16 +563,28 @@ export default function FoodCourt() {
           </TabsContent>
 
           <TabsContent value="enquiries">
+            <div className="flex justify-end mb-4">
+              <select
+                value={enquiryPanchayathFilter}
+                onChange={(e) => setEnquiryPanchayathFilter(e.target.value)}
+                className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+              >
+                <option value="">All Panchayaths</option>
+                {panchayaths.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
 
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {verifiedEnquiries.length === 0 ? (
+              {filteredEnquiries.length === 0 ? (
                 <Card className="md:col-span-2 lg:col-span-3">
                   <CardContent className="p-8 text-center text-muted-foreground">
-                    No verified enquiries yet
+                    No verified enquiries {enquiryPanchayathFilter ? 'for this panchayath' : 'yet'}
                   </CardContent>
                 </Card>
               ) : (
-                verifiedEnquiries.map((enquiry) => (
+                filteredEnquiries.map((enquiry) => (
                   <Card key={enquiry.id} className="animate-fade-in">
                     <CardContent className="p-4">
                       <div className="flex items-start justify-between">
